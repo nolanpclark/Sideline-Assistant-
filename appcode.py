@@ -37,6 +37,18 @@ with st.sidebar.form("play_form", clear_on_submit=True):
     name = st.text_input("Play Name (e.g., Inside Zone)")
     gain = st.number_input("Yards Gained", value=0)
     
+# INSIDE YOUR SIDEBAR SECTION
+st.sidebar.title("Data Tools")
+
+hudl_file = st.sidebar.file_uploader("Upload Hudl Export", type=['csv', 'xlsx'])
+
+if hudl_file is not None:
+    new_data = process_hudl_upload(hudl_file)
+    if new_data is not None:
+        # This merges the Hudl data into your existing play database
+        df = pd.concat([df, new_data], ignore_index=True)
+        st.sidebar.success("Hudl Data Imported!")
+    
     submitted = st.form_submit_button("Save Play")
     if submitted:
         # Success Logic: 40% on 1st, 50% on 2nd, 100% on 3rd/4th
