@@ -37,7 +37,30 @@ def load_hudl(file):
     except Exception as e:
         st.error(f"Excel Error: {e}")
         return None
-
+# --- 5. Matching & Result Finding ---
+if not st.session_state.df.empty:
+    # 1. Start with a filter for the Down and Hash (Most important)
+    match = st.session_state.df[
+        (st.session_state.df['DN'] == ui_dn) & 
+        (st.session_state.df['HASH'] == ui_hash)
+    ]
+    
+    # 2. Narrow it down by Distance (Looking for +/- 1 yard)
+    # We use a 1-yard window to make it easier to find plays
+    final_results = match[match['DIST'].between(ui_dist - 1, ui_dist + 1)]
+    
+    if not final_results.empty:
+        st.subheader(f"Top Plays for {ui_dn} & {ui_dist} yds")
+        # Show top plays by Gain
+        display_df = final_results.sort_values(by='GAIN', ascending=False).head(10)
+        st.table(display_df[['PLAY', 'GAIN', 'DIST']])
+    elif not match.empty:
+        st.info(f"No plays found for exactly {ui_dist} yards. Here are all {ui_dn} Down plays from this hash:")
+        st.table(match.sort_values(by='GAIN', ascending=False).head(5))
+    else:
+        st.info(f"No {ui_dn} Down plays found from the {ui_hash} hash in this file.")
+else:
+    st.warning("Please upload your Hudl Excel in the sidebar.")
 # --- Sidebar ---
 with st.sidebar:
     st.header("Upload Game")
