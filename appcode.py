@@ -1,43 +1,44 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="Play-Call Finder", layout="wide")
+st.set_page_config(page_title="Sideline Play-Finder", layout="wide")
 
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame()
 
 def load_hudl(file):
     try:
-        # Load the raw data without assuming where the headers are
+        # 1. Read the excel file
+        # header=None helps us find the headers manually if they aren't on Row 1
         raw = pd.read_excel(file, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, header=None)
         
-        # --- NEW LOGIC: FIND THE HEADER ROW ---
-        header_row_index = 0
+        # 2. Locate the row that contains 'DN'
+        header_idx = 0
         for i, row in raw.iterrows():
-            # Search for 'DN' or 'DIST' in the row to find the start of the data
-            if any("DN" in str(val).upper() for val in row.values):
-                header_row_index = i
+            if "DN" in [str(v).strip().upper() for v in row.values]:
+                header_idx = i
                 break
         
-        # Re-read the file starting from the correct row
-        data = raw.iloc[header_row_index:].copy()
-        data.columns = data.iloc[0].str.strip().str.upper() # Set headers
-        data = data[1:] # Remove the header row from the data
+        # 3. Re-load from that specific row
+        data = raw.iloc[header_idx:].copy()
+        data.columns = data.iloc[0].str.strip().str.upper() # Clean the headers
+        data = data[1:] # Drop the header row itself from the data
         
-        # --- EXTRACT DATA PIECE BY PIECE ---
+        # 4. Map directly to your screenshot's column names
         final = pd.DataFrame()
-        # We use .get() so the app doesn't crash if a column is missing
-        final['DN'] = pd.to_numeric(data.get('DN'), errors='coerce')
-        final['DIST'] = pd.to_numeric(data.get('DIST'), errors='coerce')
-        final['HASH'] = data.get('HASH').astype(str).str.strip().str.upper()
-        final['PLAY'] = data.get('OFF PLAY').astype(str)
-        final['GAIN'] = pd.to_numeric(data.get('GN/LS'), errors='coerce')
+        # Using .get() with a default empty series to prevent the 'NoneType' error
+        final['DN'] = pd.to_numeric(data.get('DN', pd.Series()), errors='coerce')
+        final['DIST'] = pd.to_numeric(data.get('DIST', pd.Series()), errors='coerce')
+        final['HASH'] = data.get('HASH', pd.Series()).fillna('M').astype(str).str.strip().str.upper()
+        final['PLAY'] = data.get('OFF PLAY', pd.Series()).astype(str)
+        final['GAIN'] = pd.to_numeric(data.get('GN/LS', pd.Series()), errors='coerce')
         
         return final.dropna(subset=['DN'])
     except Exception as e:
         st.error(f"Excel Error: {e}")
         return None
 
+# --- Sidebar ---
 with st.sidebar:
     st.header("Upload Game")
     uploaded_file = st.file_uploader("Hudl Excel", type=['xlsx', 'csv'])
@@ -45,9 +46,10 @@ with st.sidebar:
         data = load_hudl(uploaded_file)
         if data is not None:
             st.session_state.df = data
-            st.success("File Loaded!")
+            st.success("Loaded Successfully!")
 
-st.title("🏈 Play-Call Finder")
+# --- Main App ---
+st.title("🏈 Sideline Play-Finder")
 
 c1, c2, c3 = st.columns(3)
 with c1: ui_dn = st.selectbox("Down", [1, 2, 3, 4])
@@ -57,7 +59,7 @@ with c3: ui_hash = st.radio("Hash", ["L", "M", "R"], horizontal=True)
 st.divider()
 
 if not st.session_state.df.empty:
-    # Filter the data based on your buttons (L, M, R)
+    # Match the buttons to your Excel columns
     results = st.session_state.df[
         (st.session_state.df['DN'] == ui_dn) & 
         (st.session_state.df['DIST'].between(ui_dist-2, ui_dist+2)) &
@@ -65,8 +67,8 @@ if not st.session_state.df.empty:
     ]
     
     if not results.empty:
-        st.subheader(f"Top Plays for {ui_dn} & {ui_dist}")
-        # Show top 10 plays by GAIN (GN/LS)
+        st.subheader(f"Best Plays for {ui_dn} & {ui_dist} from {ui_hash} Hash")
+        # Sort by the largest gains (GN/LS column)
         st.table(results.sort_values(by='GAIN', ascending=False).head(10))
     else:
         st.info("No plays found for this specific situation.")
