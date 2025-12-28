@@ -14,11 +14,10 @@ def process_hudl(file):
         # Read the file
         data = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
         
-        # Strip any hidden spaces from column names
-        data.columns = data.columns.str.strip()
+        # FIX: Make all headers uppercase and remove spaces to prevent KeyErrors
+        data.columns = data.columns.str.strip().str.upper()
         
-        # EXACT MAPPING from your screenshot
-        # DN -> Down, DIST -> Distance, HASH -> Hash, OFF PLAY -> Play_Name, GN/LS -> Gain
+        # EXACT MAPPING based on your screenshot
         mapping = {
             'DN': 'Down', 
             'DIST': 'Distance', 
@@ -29,14 +28,18 @@ def process_hudl(file):
         
         clean = data.rename(columns=mapping)
         
-        # Convert your 'L', 'M', 'R' values to 'Left', 'Middle', 'Right'
+        # FIX: Convert your 'L', 'M', 'R' values to 'Left', 'Middle', 'Right'
+        # This ensures the filter on the main screen actually finds the plays
         hash_map = {'L': 'Left', 'M': 'Middle', 'R': 'Right'}
-        clean['Hash'] = clean['Hash'].map(hash_map).fillna('Middle')
+        if 'Hash' in clean.columns:
+            clean['Hash'] = clean['Hash'].map(hash_map).fillna('Middle')
 
-        # Calculate Success (100% of dist on 3rd/4th, 50% on 2nd, 40% on 1st)
+        # Success Logic (Football Efficiency)
         def calc_success(row):
             try:
-                d, dist, g = int(row['Down']), float(row['Distance']), float(row['Gain'])
+                d = int(row['Down'])
+                dist = float(row['Distance'])
+                g = float(row['Gain'])
                 if d == 1: return 1 if g >= (dist * 0.4) else 0
                 if d == 2: return 1 if g >= (dist * 0.5) else 0
                 return 1 if g >= dist else 0
@@ -44,8 +47,9 @@ def process_hudl(file):
 
         clean['Success'] = clean.apply(calc_success, axis=1)
         
-        # Keep only the columns we need
-        return clean[['Down', 'Distance', 'Hash', 'Play_Name', 'Gain', 'Success']].dropna(subset=['Down'])
+        # Only keep the columns our app uses
+        cols_to_keep = ['Down', 'Distance', 'Hash', 'Play_Name', 'Gain', 'Success']
+        return clean[cols_to_keep].dropna(subset=['Down'])
     
     except Exception as e:
         st.error(f"Hudl Error: {e}")
@@ -74,7 +78,6 @@ with st.sidebar:
         f_gain = st.number_input("Gain/Loss", value=0)
         
         if st.form_submit_button("Save Play"):
-            # Simple success for manual entry
             suc = 1 if f_gain >= f_dist else 0
             new_row = pd.DataFrame([[f_dn, f_dist, f_hash, f_play, f_gain, suc]], 
                                    columns=['Down', 'Distance', 'Hash', 'Play_Name', 'Gain', 'Success'])
@@ -84,7 +87,7 @@ with st.sidebar:
 # --- 4. MAIN DASHBOARD ---
 st.title("🏈 Sideline Science")
 
-# Situation Picker
+# Situation Picker (This is the area to set current Hash)
 st.subheader("Current Situation")
 c1, c2, c3 = st.columns(3)
 with c1: cur_dn = st.selectbox("Down", [1, 2, 3, 4], key="s_dn")
@@ -93,21 +96,24 @@ with c3: cur_hash = st.radio("Field Position", ["Left", "Middle", "Right"], hori
 
 st.divider()
 
-# Filter Logic
-results = st.session_state.df[
-    (st.session_state.df['Down'] == cur_dn) & 
-    (st.session_state.df['Distance'].between(cur_dist-2, cur_dist+2)) &
-    (st.session_state.df['Hash'] == cur_hash)
-]
+# Suggestions Filter
+if not st.session_state.df.empty:
+    results = st.session_state.df[
+        (st.session_state.df['Down'] == cur_dn) & 
+        (st.session_state.df['Distance'].between(cur_dist-2, cur_dist+2)) &
+        (st.session_state.df['Hash'] == cur_hash)
+    ]
 
-if not results.empty:
-    st.subheader("Statistical Suggestions")
-    summary = results.groupby('Play_Name').agg({'Success': 'mean', 'Gain': 'mean', 'Play_Name': 'count'})
-    summary.columns = ['Success %', 'Avg Gain', 'Calls']
-    summary['Success %'] = (summary['Success %'] * 100).astype(int)
-    st.table(summary.sort_values('Success %', ascending=False))
+    if not results.empty:
+        st.subheader("Statistical Suggestions")
+        summary = results.groupby('Play_Name').agg({'Success': 'mean', 'Gain': 'mean', 'Play_Name': 'count'})
+        summary.columns = ['Success %', 'Avg Gain', 'Calls']
+        summary['Success %'] = (summary['Success %'] * 100).astype(int)
+        st.table(summary.sort_values('Success %', ascending=False))
+    else:
+        st.info(f"No data found for {cur_dn} & {cur_dist} from the {cur_hash} hash.")
 else:
-    st.info("No historical data found for this exact situation.")
+    st.info("Upload your Hudl Excel in the sidebar to begin.")
 
 with st.expander("View Full Play History"):
     st.dataframe(st.session_state.df, use_container_width=True)
