@@ -89,4 +89,4 @@ st.divider()
 # --- Verification Table ---
 if not st.session_state.df.empty:
     with st.expander("🔍 Click to see all plays for this Down/Hash"):
-        st.dataframe(match.sort_values(by='GAIN', ascending=False))   
+        st.dataframe(match.sort_values(by='GAIN', ascending=False))
