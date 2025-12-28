@@ -14,7 +14,7 @@ def process_hudl(file):
         # Load the file
         data = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
         
-        # Strip any hidden spaces and make everything uppercase for perfect matching
+        # Clean headers: remove spaces and make uppercase
         data.columns = data.columns.str.strip().str.upper()
         
         # MAPPING BASED ON YOUR SCREENSHOT:
@@ -27,41 +27,42 @@ def process_hudl(file):
             'GN/LS': 'Gain'
         }
         
-        # Rename only the headers found in your file
+        # Rename the columns found in your Excel
         clean = data.rename(columns=mapping)
         
-        # Convert your 'L', 'M', 'R' values to full words so they work with the app filters
+        # Ensure 'Down' and 'Distance' are numbers (not text)
+        clean['Down'] = pd.to_numeric(clean['Down'], errors='coerce')
+        clean['Distance'] = pd.to_numeric(clean['Distance'], errors='coerce')
+        clean['Gain'] = pd.to_numeric(clean['Gain'], errors='coerce')
+
+        # Map your 'L', 'M', 'R' values to full words
         hash_map = {'L': 'Left', 'M': 'Middle', 'R': 'Right'}
         if 'Hash' in clean.columns:
             clean['Hash'] = clean['Hash'].map(hash_map).fillna('Middle')
         else:
             clean['Hash'] = 'Middle'
 
-        # Force numeric types to prevent math errors
-        clean['Down'] = pd.to_numeric(clean['Down'], errors='coerce')
-        clean['Distance'] = pd.to_numeric(clean['Distance'], errors='coerce')
-        clean['Gain'] = pd.to_numeric(clean['Gain'], errors='coerce')
-
-        # Calculate Success (Simple version to ensure it loads)
+        # Calculate Success (Success if Gain >= Distance)
         def calc_success(row):
             try:
-                if row['Gain'] >= row['Distance']: return 1
+                return 1 if row['Gain'] >= row['Distance'] else 0
+            except:
                 return 0
-            except: return 0
 
         clean['Success'] = clean.apply(calc_success, axis=1)
         
-        # SAFETY: Only return columns that exist to prevent "not in index" error
+        # SAFETY CHECK: Only try to use columns that actually exist
         final_cols = ['Down', 'Distance', 'Hash', 'Play_Name', 'Gain', 'Success']
-        available_cols = [c for c in final_cols if c in clean.columns]
+        available_cols = [col for col in final_cols if col in clean.columns]
         
+        # Return only the cleaned data
         return clean[available_cols].dropna(subset=['Down'])
     
     except Exception as e:
         st.error(f"Hudl Error: {e}")
         return None
 
-# --- 3. SIDEBAR (LOGGING & UPLOADER) ---
+# --- 3. SIDEBAR (TOOLS & LOGGING) ---
 with st.sidebar:
     st.title("📂 Team Tools")
     
@@ -75,13 +76,13 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("Log Recent Play")
+    st.subheader("Log Live Play")
     with st.form("live_log", clear_on_submit=True):
         f_dn = st.selectbox("Down", [1, 2, 3, 4])
-        f_dist = st.number_input("Distance to Go", value=10)
-        f_hash = st.radio("Hash Mark", ["Left", "Middle", "Right"], horizontal=True)
-        f_play = st.text_input("Play Name (e.g., Inside Zone)")
-        f_gain = st.number_input("Yards Gained", value=0)
+        f_dist = st.number_input("Distance", value=10)
+        f_hash = st.radio("Hash", ["Left", "Middle", "Right"], horizontal=True)
+        f_play = st.text_input("Play Name")
+        f_gain = st.number_input("Gain/Loss", value=0)
         
         if st.form_submit_button("Save Play"):
             suc = 1 if f_gain >= f_dist else 0
@@ -93,7 +94,7 @@ with st.sidebar:
 # --- 4. MAIN DASHBOARD ---
 st.title("🏈 Offensive Play-Call Assistant")
 
-# Situation Picker
+# The Situation Area
 st.subheader("Current Situation")
 c1, c2, c3 = st.columns(3)
 with c1: cur_dn = st.selectbox("Current Down", [1, 2, 3, 4], key="s_dn")
@@ -102,7 +103,7 @@ with c3: cur_hash = st.radio("Field Position", ["Left", "Middle", "Right"], hori
 
 st.divider()
 
-# Results Section
+# Filter and Show Results
 if not st.session_state.df.empty:
     results = st.session_state.df[
         (st.session_state.df['Down'] == cur_dn) & 
@@ -117,7 +118,9 @@ if not st.session_state.df.empty:
         summary['Success %'] = (summary['Success %'] * 100).astype(int)
         st.table(summary.sort_values('Success %', ascending=False))
     else:
-        st.info("No historical data for this exact situation yet.")
+        st.info("No historical data matches this situation.")
 else:
-    st.info("Upload your Hudl data in the sidebar to begin.")
+    st.info("Upload data in the sidebar to see suggestions.")
 
+with st.expander("View Full History"):
+    st.dataframe(st.session_state.df, use_container_width=True)
