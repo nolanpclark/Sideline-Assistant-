@@ -2,19 +2,19 @@ import streamlit as st
 import pandas as pd
 
 # --- 1. INITIAL APP CONFIG ---
-st.set_page_config(page_title="Sideline Science", layout="wide")
+st.set_page_config(page_title="Offensive Play-Call Assistant", layout="wide")
 
-# Initialize the Database with the correct column names
+# Initialize the Database
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame(columns=['Down', 'Distance', 'Hash', 'Play_Name', 'Gain', 'Success'])
 
-# --- 2. HUDL PROCESSING (MAPPED TO YOUR EXCEL HEADERS) ---
+# --- 2. THE FIXED HUDL PROCESSING FUNCTION ---
 def process_hudl(file):
     try:
         # Load the file
         data = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
         
-        # Strip spaces and make everything uppercase for perfect matching
+        # Strip any hidden spaces and make everything uppercase for perfect matching
         data.columns = data.columns.str.strip().str.upper()
         
         # MAPPING BASED ON YOUR SCREENSHOT:
@@ -27,31 +27,35 @@ def process_hudl(file):
             'GN/LS': 'Gain'
         }
         
-        # Rename only the ones that exist
-        existing_mapping = {k: v for k, v in mapping.items() if k in data.columns}
-        clean = data.rename(columns=existing_mapping)
+        # Rename only the headers found in your file
+        clean = data.rename(columns=mapping)
         
-        # Convert your 'L', 'M', 'R' values to full words to match the app buttons
+        # Convert your 'L', 'M', 'R' values to full words so they work with the app filters
         hash_map = {'L': 'Left', 'M': 'Middle', 'R': 'Right'}
         if 'Hash' in clean.columns:
             clean['Hash'] = clean['Hash'].map(hash_map).fillna('Middle')
         else:
             clean['Hash'] = 'Middle'
 
-        # Success Logic: Standard football efficiency
+        # Force numeric types to prevent math errors
+        clean['Down'] = pd.to_numeric(clean['Down'], errors='coerce')
+        clean['Distance'] = pd.to_numeric(clean['Distance'], errors='coerce')
+        clean['Gain'] = pd.to_numeric(clean['Gain'], errors='coerce')
+
+        # Calculate Success (Simple version to ensure it loads)
         def calc_success(row):
             try:
-                d, dist, g = int(row['Down']), float(row['Distance']), float(row['Gain'])
-                if d == 1: return 1 if g >= (dist * 0.4) else 0
-                if d == 2: return 1 if g >= (dist * 0.5) else 0
-                return 1 if g >= dist else 0
+                if row['Gain'] >= row['Distance']: return 1
+                return 0
             except: return 0
 
         clean['Success'] = clean.apply(calc_success, axis=1)
         
-        # Ensure only the necessary columns are returned to avoid "not in index" errors
+        # SAFETY: Only return columns that exist to prevent "not in index" error
         final_cols = ['Down', 'Distance', 'Hash', 'Play_Name', 'Gain', 'Success']
-        return clean[final_cols].dropna(subset=['Down'])
+        available_cols = [c for c in final_cols if c in clean.columns]
+        
+        return clean[available_cols].dropna(subset=['Down'])
     
     except Exception as e:
         st.error(f"Hudl Error: {e}")
@@ -71,13 +75,13 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("Log Live Play")
+    st.subheader("Log Recent Play")
     with st.form("live_log", clear_on_submit=True):
         f_dn = st.selectbox("Down", [1, 2, 3, 4])
-        f_dist = st.number_input("Distance", value=10)
+        f_dist = st.number_input("Distance to Go", value=10)
         f_hash = st.radio("Hash Mark", ["Left", "Middle", "Right"], horizontal=True)
-        f_play = st.text_input("Play Name")
-        f_gain = st.number_input("Gain/Loss", value=0)
+        f_play = st.text_input("Play Name (e.g., Inside Zone)")
+        f_gain = st.number_input("Yards Gained", value=0)
         
         if st.form_submit_button("Save Play"):
             suc = 1 if f_gain >= f_dist else 0
@@ -87,9 +91,9 @@ with st.sidebar:
             st.toast(f"Logged {f_play}")
 
 # --- 4. MAIN DASHBOARD ---
-st.title("🏈 Sideline Science")
+st.title("🏈 Offensive Play-Call Assistant")
 
-# Situation Picker (Area to set current Hash)
+# Situation Picker
 st.subheader("Current Situation")
 c1, c2, c3 = st.columns(3)
 with c1: cur_dn = st.selectbox("Current Down", [1, 2, 3, 4], key="s_dn")
@@ -98,7 +102,7 @@ with c3: cur_hash = st.radio("Field Position", ["Left", "Middle", "Right"], hori
 
 st.divider()
 
-# Result Filtering
+# Results Section
 if not st.session_state.df.empty:
     results = st.session_state.df[
         (st.session_state.df['Down'] == cur_dn) & 
@@ -107,14 +111,13 @@ if not st.session_state.df.empty:
     ]
 
     if not results.empty:
+        st.subheader("Statistical Suggestions")
         summary = results.groupby('Play_Name').agg({'Success': 'mean', 'Gain': 'mean', 'Play_Name': 'count'})
         summary.columns = ['Success %', 'Avg Gain', 'Calls']
         summary['Success %'] = (summary['Success %'] * 100).astype(int)
         st.table(summary.sort_values('Success %', ascending=False))
     else:
-        st.info(f"No data for {cur_dn} & {cur_dist} from the {cur_hash} hash.")
+        st.info("No historical data for this exact situation yet.")
 else:
     st.info("Upload your Hudl data in the sidebar to begin.")
 
-with st.expander("View Full Play History"):
-    st.dataframe(st.session_state.df, use_container_width=True)
