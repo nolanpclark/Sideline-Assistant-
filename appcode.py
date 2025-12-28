@@ -1,33 +1,36 @@
 import streamlit as st
 import pandas as pd
+import os
+import glob
 
-st.set_page_config(page_title="Sideline Play-Finder", layout="wide")
+st.set_page_config(page_title="Season Play-Finder", layout="wide")
 
-if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame()
+# --- Step 1: Set up Persistent Storage Folder ---
+SAVE_DIR = "Season_Data"
+if not os.path.exists(SAVE_DIR):
+    os.makedirs(SAVE_DIR)
 
-def load_hudl(file):
+# --- Step 2: Improved Loader ---
+def load_hudl(file_source, is_path=False):
     try:
-        # 1. Use your working read logic
-        raw = pd.read_excel(file, header=None) if file.name.endswith('.xlsx') else pd.read_csv(file, header=None)
+        # Load from path (saved file) or UploadedFile object
+        if is_path:
+            raw = pd.read_excel(file_source, header=None) if file_source.endswith('.xlsx') else pd.read_csv(file_source, header=None)
+        else:
+            raw = pd.read_excel(file_source, header=None) if file_source.name.endswith('.xlsx') else pd.read_csv(file_source, header=None)
         
-        # 2. Locate the row that contains 'DN'
         header_idx = 0
         for i, row in raw.iterrows():
             if "DN" in [str(v).strip().upper() for v in row.values]:
                 header_idx = i
                 break
         
-        # 3. Process data from the confirmed header row
         data = raw.iloc[header_idx:].copy()
         data.columns = data.iloc[0].str.strip().str.upper() 
         data = data[1:] 
         
-        # 4. AGGRESSIVE CLEANING: Strip letters (like 'D' or 'K') so math works
         final = pd.DataFrame()
-        
         def clean_to_num(series):
-            # Keeps only numbers and minus signs
             return pd.to_numeric(series.astype(str).str.extract('([-+]?\d+)', expand=False), errors='coerce')
 
         final['DN'] = clean_to_num(data.get('DN', pd.Series()))
@@ -38,24 +41,54 @@ def load_hudl(file):
         
         return final.dropna(subset=['DN', 'PLAY'])
     except Exception as e:
-        st.error(f"Excel Error: {e}")
         return None
 
-# --- Sidebar (Your Working Logic) ---
-with st.sidebar:
-    st.header("Upload Game")
-    uploaded_file = st.file_uploader("Hudl Excel", type=['xlsx', 'csv'])
-    if uploaded_file:
-        data = load_hudl(uploaded_file)
-        if data is not None:
-            st.session_state.df = data
-            st.success("Loaded Successfully!")
+# --- Step 3: Automatic Season Sync ---
+def sync_season():
+    all_games = []
+    # Find every excel/csv file in the Season_Data folder
+    files = glob.glob(os.path.join(SAVE_DIR, "*.xlsx")) + glob.glob(os.path.join(SAVE_DIR, "*.csv"))
+    for f in files:
+        game_data = load_hudl(f, is_path=True)
+        if game_data is not None:
+            all_games.append(game_data)
+    
+    if all_games:
+        return pd.concat(all_games, ignore_index=True)
+    return pd.DataFrame()
 
-# --- Main App Interface ---
-st.title("🏈 Sideline Play-Finder")
+# Initialize Season Data
+st.session_state.df = sync_season()
+
+# --- SIDEBAR: Multi-File Upload & Storage ---
+with st.sidebar:
+    st.header("🏈 Season Manager")
+    # Allow multiple files at once
+    new_files = st.file_uploader("Upload New Game(s)", type=['xlsx', 'csv'], accept_multiple_files=True)
+    
+    if new_files:
+        for f in new_files:
+            # Save the file to the local folder permanently
+            save_path = os.path.join(SAVE_DIR, f.name)
+            with open(save_path, "wb") as buffer:
+                buffer.write(f.getbuffer())
+        
+        st.success(f"Saved {len(new_files)} new game(s) to Season Memory!")
+        # Refresh the master database
+        st.session_state.df = sync_season()
+
+    if st.button("🗑️ Clear All Season Data"):
+        for f in glob.glob(os.path.join(SAVE_DIR, "*")):
+            os.remove(f)
+        st.session_state.df = pd.DataFrame()
+        st.rerun()
+
+    st.info(f"Currently tracking {len(glob.glob(os.path.join(SAVE_DIR, '*')))} games.")
+
+# --- MAIN APP INTERFACE (Same as before) ---
+st.title("🏈 Season-Wide Play-Finder")
 
 col_ui, col_stats = st.columns([1, 2])
-
 with col_ui:
     st.subheader("Current Situation")
     ui_dn = st.selectbox("Down", [1, 2, 3, 4], index=0)
@@ -63,37 +96,19 @@ with col_ui:
     ui_hash = st.radio("Hash", ["L", "M", "R"], horizontal=True, index=1)
 
 with col_stats:
-    st.subheader("🔥 Top 3 Suggested Plays")
-    
+    st.subheader("🔥 Top 3 Suggested Plays (Season Avg)")
     if not st.session_state.df.empty:
-        # Step 1: Match Down and Hash exactly
         match = st.session_state.df[
             (st.session_state.df['DN'] == ui_dn) & 
-            (st.session_state.df['HASH'] == ui_hash)
+            (st.session_state.df['HASH'] == ui_hash) &
+            (st.session_state.df['DIST'].between(ui_dist - 3, ui_dist + 3))
         ]
         
-        # Step 2: Wider search for Distance (+/- 3 yards) to ensure results populate
-        results = match[match['DIST'].between(ui_dist - 3, ui_dist + 3)]
-        
-        # Step 3: Fallback if distance is too specific
-        display_data = results if not results.empty else match
-        
-        if not display_data.empty:
-            # Group by Play and find the highest Average Gain
-            summary = display_data.groupby('PLAY').agg({'GAIN': ['mean', 'count']})
+        if not match.empty:
+            summary = match.groupby('PLAY').agg({'GAIN': ['mean', 'count']})
             summary.columns = ['Avg Gain', 'Times Run']
-            
-            # Show top 3 by Gain
             st.table(summary.sort_values(by='Avg Gain', ascending=False).head(3))
         else:
-            st.info(f"No {ui_dn} Down plays found for hash {ui_hash}.")
+            st.info("No plays found for this situation in your season history.")
     else:
-        st.info("Upload your Hudl Excel in the sidebar to see play suggestions.")
-
-st.divider()
-
-# DEBUG: Use this to see if the data is actually reaching the app's "brain"
-if not st.session_state.df.empty:
-    with st.expander("🔍 Debug: See Processed Data"):
-        st.write("This is how the app reads your file after cleaning:")
-        st.dataframe(st.session_state.df.head(20))
+        st.info("Upload your games in the sidebar to build your season database.")
