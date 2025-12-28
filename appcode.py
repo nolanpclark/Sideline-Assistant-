@@ -1,107 +1,72 @@
 import streamlit as st
 import pandas as pd
 
-# --- 1. INITIAL APP CONFIG ---
-st.set_page_config(page_title="Offensive Play-Call Assistant", layout="wide")
+st.set_page_config(page_title="Sideline Assistant", layout="wide")
 
+# 1. Initialize Database
 if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame(columns=['Down', 'Distance', 'Hash', 'Play_Name', 'Gain', 'Success'])
+    st.session_state.df = pd.DataFrame(columns=['DN', 'DIST', 'HASH', 'OFF PLAY', 'GN/LS'])
 
-# --- 2. AGGRESSIVE DATA PROCESSING ---
+# 2. Simplified Hudl Loader
 def process_hudl(file):
     try:
         data = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
-        
-        # Clean up column names immediately
+        # Clean headers to match your file exactly
         data.columns = data.columns.str.strip().str.upper()
         
-        # Create a new clean dataframe
-        clean = pd.DataFrame()
-
-        # MANUALLY EXTRACT BY KEYWORD (More reliable than rename)
-        # We look for headers that look like your Hudl export
-        for col in data.columns:
-            if col in ['DN', 'DOWN']: clean['Down'] = data[col]
-            if col in ['DIST', 'DISTANCE']: clean['Distance'] = data[col]
-            if col in ['HASH', 'SIDE']: clean['Hash'] = data[col]
-            if col in ['OFF PLAY', 'PLAY NAME', 'PLAY']: clean['Play_Name'] = data[col]
-            if col in ['GN/LS', 'GAIN', 'YDS']: clean['Gain'] = data[col]
-
-        # Safety: If we still don't have Down, the app can't run
-        if 'Down' not in clean.columns:
-            st.error("Could not find 'DN' column in your file. Headers found: " + str(list(data.columns)))
-            return None
-
-        # Convert numeric columns and fill gaps
-        clean['Down'] = pd.to_numeric(clean['Down'], errors='coerce')
-        clean['Distance'] = pd.to_numeric(clean['Distance'], errors='coerce')
-        clean['Gain'] = pd.to_numeric(clean['Gain'], errors='coerce')
+        # We only keep the columns you specifically care about
+        needed = ['DN', 'DIST', 'HASH', 'OFF PLAY', 'GN/LS']
+        # Filter data to only include these 5 columns
+        subset = data[[c for c in needed if c in data.columns]]
         
-        # Map L/M/R values
-        hash_map = {'L': 'Left', 'M': 'Middle', 'R': 'Right'}
-        if 'Hash' in clean.columns:
-            clean['Hash'] = clean['Hash'].astype(str).str.strip().str.upper().map(hash_map).fillna('Middle')
-        else:
-            clean['Hash'] = 'Middle'
-
-        # Success Logic
-        clean['Success'] = clean.apply(lambda r: 1 if r['Gain'] >= r['Distance'] else 0, axis=1)
-        
-        # Drop rows where Down is missing
-        return clean.dropna(subset=['Down'])
-    
+        # Standardize HASH values (L/M/R -> Left/Middle/Right)
+        if 'HASH' in subset.columns:
+            h_map = {'L': 'Left', 'M': 'Middle', 'R': 'Right'}
+            subset['HASH'] = subset['HASH'].astype(str).str.strip().str.upper().map(h_map).fillna('Middle')
+            
+        return subset.dropna(subset=['DN'])
     except Exception as e:
-        st.error(f"Hudl Error: {e}")
+        st.error(f"Excel Error: {e}")
         return None
 
-# --- 3. SIDEBAR ---
+# 3. Sidebar Tools
 with st.sidebar:
-    st.title("📂 Team Tools")
-    hudl_file = st.file_uploader("Upload Hudl Excel", type=['csv', 'xlsx'])
-    if hudl_file:
-        new_data = process_hudl(hudl_file)
-        if new_data is not None:
-            st.session_state.df = pd.concat([st.session_state.df, new_data], ignore_index=True)
-            st.success("Data Imported!")
+    st.header("Upload Game")
+    uploaded_file = st.file_uploader("Hudl Excel", type=['xlsx', 'csv'])
+    if uploaded_file:
+        df_new = process_hudl(uploaded_file)
+        if df_new is not None:
+            st.session_state.df = df_new
+            st.success("Loaded!")
 
-    st.divider()
-    st.subheader("Log Live Play")
-    with st.form("live_log", clear_on_submit=True):
-        f_dn = st.selectbox("Down", [1, 2, 3, 4])
-        f_dist = st.number_input("Distance", value=10)
-        f_hash = st.radio("Hash", ["Left", "Middle", "Right"], horizontal=True)
-        f_play = st.text_input("Play Name")
-        f_gain = st.number_input("Gain", value=0)
-        if st.form_submit_button("Save"):
-            suc = 1 if f_gain >= f_dist else 0
-            new_row = pd.DataFrame([[f_dn, f_dist, f_hash, f_play, f_gain, suc]], 
-                                   columns=['Down', 'Distance', 'Hash', 'Play_Name', 'Gain', 'Success'])
-            st.session_state.df = pd.concat([st.session_state.df, new_row], ignore_index=True)
+# 4. Main App Interface
+st.title("🏈 Play-Call Finder")
 
-# --- 4. MAIN DASHBOARD ---
-st.title("🏈 Offensive Play-Call Assistant")
-
-st.subheader("Current Situation")
-c1, c2, c3 = st.columns(3)
-with c1: cur_dn = st.selectbox("Current Down", [1, 2, 3, 4], key="s_dn")
-with c2: cur_dist = st.slider("Distance to Go", 1, 20, 10)
-with c3: cur_hash = st.radio("Field Position", ["Left", "Middle", "Right"], horizontal=True, index=1)
+col1, col2, col3 = st.columns(3)
+with col1:
+    ui_dn = st.pills("Down", [1, 2, 3, 4], default=1)
+with col2:
+    ui_dist = st.slider("Distance", 0, 15, 10)
+with col3:
+    ui_hash = st.segmented_control("Hash", ["Left", "Middle", "Right"], default="Middle")
 
 st.divider()
 
+# 5. Matching & Result Finding
 if not st.session_state.df.empty:
-    results = st.session_state.df[
-        (st.session_state.df['Down'] == cur_dn) & 
-        (st.session_state.df['Distance'].between(cur_dist-2, cur_dist+2)) &
-        (st.session_state.df['Hash'] == cur_hash)
+    # Filter the data based on your buttons
+    match = st.session_state.df[
+        (st.session_state.df['DN'] == ui_dn) & 
+        (st.session_state.df['DIST'].between(ui_dist-2, ui_dist+2)) &
+        (st.session_state.df['HASH'] == ui_hash)
     ]
-
-    if not results.empty:
-        summary = results.groupby('Play_Name').agg({'Success': 'mean', 'Gain': 'mean', 'Play_Name': 'count'})
-        summary.columns = ['Success %', 'Avg Gain', 'Calls']
-        summary['Success %'] = (summary['Success %'] * 100).astype(int)
-        st.table(summary.sort_values('Success %', ascending=False))
+    
+    if not match.empty:
+        st.subheader("Plays with Highest Yardage")
+        # Sort by GN/LS (Yards Gained) to find the biggest plays
+        top_plays = match.sort_values(by='GN/LS', ascending=False)
+        st.dataframe(top_plays[['OFF PLAY', 'GN/LS', 'DN', 'DIST']], use_container_width=True, hide_index=True)
     else:
-        st.info("No historical data found.")
+        st.info("No plays found for this specific DN/DIST/HASH combination.")
 else:
-    st.info("Upload data in the sidebar.")
+    st.warning("Please upload a Hudl Excel file in the sidebar to begin.")
