@@ -2,6 +2,21 @@ import streamlit as st
 import pandas as pd 
 import datetime
 
+def process_hudl_upload(uploaded_file):
+    # Read the Hudl Excel/CSV
+    hudl_df = pd.read_csv(uploaded_file) # or pd.read_excel
+    
+    # Map Hudl's columns to your App's format
+    # Adjust these names based on your specific Hudl setup
+    clean_df = hudl_df.rename(columns={
+        'DN': 'Down',
+        'DIST': 'Distance',
+        'OFF PLAY': 'Play_Name',
+        'GN/LS': 'Gain'
+    })
+    
+    # Save it to your app's database
+    return clean_df
 # --- CONFIGURATION ---
 st.set_page_config(page_title="OC Sideline Assistant", layout="wide")
 DB_FILE = "play_data.csv"
