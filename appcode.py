@@ -28,15 +28,6 @@ except FileNotFoundError:
     df = pd.DataFrame(columns=['Timestamp', 'Down', 'Distance', 'Hash', 'Play_Type', 'Play_Name', 'Gain', 'Success'])
 
 # --- SIDEBAR: LOG NEW PLAY ---
-st.sidebar.header("📊 Log Recent Play")
-with st.sidebar.form("play_form", clear_on_submit=True):
-    down = st.selectbox("Down", [1, 2, 3, 4])
-    dist = st.number_input("Distance to Go", min_value=1, max_value=99, value=10)
-    hash_mark = st.radio("Hash Mark", ["Left", "Middle", "Right"])
-    p_type = st.selectbox("Type", ["Run", "Pass", "RPO", "Screen"])
-    name = st.text_input("Play Name (e.g., Inside Zone)")
-    gain = st.number_input("Yards Gained", value=0)
-    
 # INSIDE YOUR SIDEBAR SECTION
 st.sidebar.title("Data Tools")
 
@@ -48,7 +39,16 @@ if hudl_file is not None:
         # This merges the Hudl data into your existing play database
         df = pd.concat([df, new_data], ignore_index=True)
         st.sidebar.success("Hudl Data Imported!")
-    
+
+st.sidebar.header("📊 Log Recent Play")
+with st.sidebar.form("play_form", clear_on_submit=True):
+    down = st.selectbox("Down", [1, 2, 3, 4])
+    dist = st.number_input("Distance to Go", min_value=1, max_value=99, value=10)
+    hash_mark = st.radio("Hash Mark", ["Left", "Middle", "Right"])
+    p_type = st.selectbox("Type", ["Run", "Pass", "RPO", "Screen"])
+    name = st.text_input("Play Name (e.g., Inside Zone)")
+    gain = st.number_input("Yards Gained", value=0)
+
     submitted = st.form_submit_button("Save Play")
     if submitted:
         # Success Logic: 40% on 1st, 50% on 2nd, 100% on 3rd/4th
