@@ -22,8 +22,23 @@ def process_hudl(file):
 
 # --- 3. SIDEBAR TOOLS ---
 with st.sidebar:
-    st.header("📋 Admin Tools")
+    st.header("📋 Admin Tools")   
+with st.sidebar:
+    st.header("📊 Data Tools")
     
+    # This creates the button you're looking for
+    hudl_file = st.file_uploader("Upload Hudl Excel", type=['csv', 'xlsx'])
+    
+    if hudl_file is not None:
+        # Code to process the file
+        hudl_df = pd.read_excel(hudl_file) if hudl_file.name.endswith('.xlsx') else pd.read_csv(hudl_file)
+        
+        # Mapping Hudl columns to your app (Adjust these if your Hudl names differ)
+        hudl_df = hudl_df.rename(columns={'DN': 'Down', 'DIST': 'Distance', 'OFF PLAY': 'Play_Name', 'GN/LS': 'Gain'})
+        
+        # Add it to your main database
+        st.session_state.df = pd.concat([st.session_state.df, hudl_df], ignore_index=True)
+        st.success("Hudl Data Imported!")
     # Upload Hudl Export
     hudl_file = st.file_uploader("Upload Hudl CSV/Excel", type=['csv', 'xlsx'])
     if hudl_file:
