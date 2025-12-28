@@ -1,76 +1,89 @@
 import streamlit as st
 import pandas as pd
-import datetime
 
 # --- 1. INITIAL APP CONFIG ---
-st.set_page_config(page_title="OC Sideline Assistant", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Sideline Science", layout="wide", initial_sidebar_state="expanded")
 
-# Initialize the "Database" in the app's memory
+# Initialize the "Database" in session state with the 'Hash' column
 if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame(columns=['Down', 'Distance', 'Play_Name', 'Gain', 'Success'])
+    st.session_state.df = pd.DataFrame(columns=['Down', 'Distance', 'Hash', 'Play_Name', 'Gain', 'Success'])
 
-# --- 2. THE HUDL PROCESSING FUNCTION ---
+# --- 2. HUDL PROCESSING (FIXED FOR GAIN/HASH) ---
 def process_hudl(file):
     try:
-        # Hudl can be .csv or .xlsx
-        if file.name.endswith('.csv'):
-            data = pd.read_csv(file)
-        else:
-            data = pd.read_excel(file)
+        data = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
         
-        # Mapping Hudl's standard shorthand to our App
-        # Note: If your Hudl uses different names, change the 'DN' part below
-        clean = data.rename(columns={
+        # Clean column names (remove spaces and make uppercase for matching)
+        data.columns = data.columns.str.strip().str.upper()
+        
+        # Mapping Hudl logic to our App
+        # We search for 'GN/LS' first, then 'GAIN', then 'YDS' to get the actual play yardage
+        mapping = {
             'DN': 'Down', 
             'DIST': 'Distance', 
             'OFF PLAY': 'Play_Name', 
-            'GN/LS': 'Gain'
-        })
+            'GN/LS': 'Gain',  # Primary Hudl gain column
+            'HASH': 'Hash'
+        }
         
-        # Calculate success for the imported plays
-        clean['Success'] = clean.apply(lambda x: 1 if x['Gain'] >= x['Distance'] else 0, axis=1)
+        # Fallback: if 'GN/LS' is missing but 'GAIN' exists, use 'GAIN'
+        if 'GN/LS' not in data.columns and 'GAIN' in data.columns:
+            mapping['GAIN'] = 'Gain'
         
-        return clean[['Down', 'Distance', 'Play_Name', 'Gain', 'Success']]
+        clean = data.rename(columns=mapping)
+        
+        # Ensure we have a Hash column
+        if 'Hash' not in clean.columns:
+            clean['Hash'] = 'Middle' # Default if missing
+            
+        # Success Logic (Football Efficiency)
+        def calc_success(row):
+            dist = row['Distance']
+            gain = row['Gain']
+            if row['Down'] == 1: return 1 if gain >= (dist * 0.4) else 0
+            if row['Down'] == 2: return 1 if gain >= (dist * 0.5) else 0
+            return 1 if gain >= dist else 0
+
+        clean['Success'] = clean.apply(calc_success, axis=1)
+        
+        # Return only the columns we need for the app
+        return clean[['Down', 'Distance', 'Hash', 'Play_Name', 'Gain', 'Success']]
     except Exception as e:
-        st.error(f"Could not read Hudl file. Error: {e}")
+        st.error(f"Hudl Error: {e}. Check if your Excel has 'DN', 'DIST', and 'GN/LS' columns.")
         return None
 
-# --- 3. SIDEBAR: DATA & LOGGING ---
+# --- 3. SIDEBAR: LOGGING & TOOLS ---
 with st.sidebar:
     st.title("📂 Team Tools")
     
-    # --- HUDL UPLOADER ---
     st.subheader("Import Game Data")
     hudl_file = st.file_uploader("Upload Hudl Excel/CSV", type=['csv', 'xlsx'])
-    
     if hudl_file:
         new_data = process_hudl(hudl_file)
         if new_data is not None:
             st.session_state.df = pd.concat([st.session_state.df, new_data], ignore_index=True)
-            st.success("Successfully imported Hudl stats!")
+            st.success("Hudl Data Imported!")
 
     st.divider()
 
-    # --- MANUAL PLAY LOG ---
     st.subheader("Log Live Play")
     with st.form("live_log", clear_on_submit=True):
         f_dn = st.selectbox("Down", [1, 2, 3, 4])
         f_dist = st.number_input("Distance", value=10)
-        f_play = st.text_input("Play Called (e.g. Power O)")
+        f_hash = st.radio("Hash Mark", ["Left", "Middle", "Right"], horizontal=True)
+        f_play = st.text_input("Play Called")
         f_gain = st.number_input("Yards Gained", value=0)
         
         if st.form_submit_button("Log Play"):
-            # Simple success logic: Did we get the first down?
             success = 1 if f_gain >= f_dist else 0
-            new_row = pd.DataFrame([[f_dn, f_dist, f_play, f_gain, success]], 
-                                   columns=['Down', 'Distance', 'Play_Name', 'Gain', 'Success'])
+            new_row = pd.DataFrame([[f_dn, f_dist, f_hash, f_play, f_gain, success]], 
+                                   columns=['Down', 'Distance', 'Hash', 'Play_Name', 'Gain', 'Success'])
             st.session_state.df = pd.concat([st.session_state.df, new_row], ignore_index=True)
             st.toast(f"Logged {f_play}!")
 
-# --- 4. MAIN DASHBOARD: THE SUGGESTION ENGINE ---
-st.title("Sideline Science")
+# --- 4. MAIN DASHBOARD ---
+st.title("🏈 Sideline Science")
 
-# Quick Stats at a glance
 if not st.session_state.df.empty:
     m1, m2, m3 = st.columns(3)
     m1.metric("Total Plays", len(st.session_state.df))
@@ -79,37 +92,37 @@ if not st.session_state.df.empty:
 
 st.divider()
 
-# The "Play Caller" Selection
 col_input, col_results = st.columns([1, 2])
 
 with col_input:
     st.subheader("The Situation")
-    cur_dn = st.pills("Down", [1, 2, 3, 4], key="pills_dn")
+    cur_dn = st.pills("Down", [1, 2, 3, 4], key="pills_dn", default=1)
     cur_dist = st.slider("Distance to Go", 1, 20, 10)
+    cur_hash = st.segmented_control("Field Position", ["Left", "Middle", "Right"], default="Middle")
 
 with col_results:
     st.subheader("Top Suggestions")
     
-    # Filter data based on user input
-    # We look for the same down and a similar distance (+/- 2 yards)
+    # FILTER: Using Down, Distance (+/- 2), and Hash
     results = st.session_state.df[
         (st.session_state.df['Down'] == cur_dn) & 
-        (st.session_state.df['Distance'].between(cur_dist-2, cur_dist+2))
+        (st.session_state.df['Distance'].between(cur_dist-2, cur_dist+2)) &
+        (st.session_state.df['Hash'] == cur_hash)
     ]
     
     if not results.empty:
-        # Create a summary of what's working
         summary = results.groupby('Play_Name').agg({
             'Success': 'mean',
             'Gain': 'mean',
             'Play_Name': 'count'
         }).rename(columns={'Play_Name': 'Calls', 'Success': 'Success %', 'Gain': 'Avg Gain'})
         
-        # Sort by best success rate
+        # Formatting for readability
+        summary['Success %'] = (summary['Success %'] * 100).astype(int)
         st.dataframe(summary.sort_values('Success %', ascending=False), use_container_width=True)
     else:
-        st.info("No historical data found for this situation. Start logging plays or upload a Hudl export!")
+        st.info(f"No data for {cur_dn} & {cur_dist} from the {cur_hash} hash.")
 
-# --- 5. DATA PREVIEW ---
 with st.expander("View Raw Play History"):
     st.dataframe(st.session_state.df, use_container_width=True)
+  
