@@ -68,7 +68,7 @@ with st.sidebar:
             st.toast(f"Logged {f_play}!")
 
 # --- 4. MAIN DASHBOARD: THE SUGGESTION ENGINE ---
-st.title("🏈 Offensive Play-Call Assistant")
+st.title("Sideline Science")
 
 # Quick Stats at a glance
 if not st.session_state.df.empty:
